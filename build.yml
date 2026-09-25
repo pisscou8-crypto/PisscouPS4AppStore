@@ -1,0 +1,118 @@
+name: Build Pisscou PS4 App Store
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld make curl unzip
+
+      - name: Download OpenOrbis v0.5.4
+        run: |
+          curl -fL \
+            https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/v0.5.4/toolchain-llvm-18.tar.gz \
+            -o openorbis.tar.gz
+
+          mkdir openorbis
+          tar -xzf openorbis.tar.gz -C openorbis
+
+      - name: Locate Toolchain
+        run: |
+          TOOL=$(find "$GITHUB_WORKSPACE/openorbis" \
+            -type f \
+            -name PkgTool.Core \
+            | head -n 1)
+
+          if [ -z "$TOOL" ]; then
+            echo "ERROR: OpenOrbis toolchain was not found."
+            exit 1
+          fi
+
+          TOOLCHAIN=$(dirname "$(dirname "$(dirname "$TOOL")")")
+
+          echo "OO_PS4_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
+
+          chmod +x "$TOOLCHAIN"/bin/linux/* || true
+
+          echo "OpenOrbis toolchain:"
+          echo "$TOOLCHAIN"
+
+      - name: Show OpenOrbis samples
+        run: |
+          echo "===== AVAILABLE SAMPLES ====="
+          find "$OO_PS4_TOOLCHAIN/samples" \
+            -maxdepth 2 \
+            -type d \
+            | sort
+
+      - name: Create project from OpenOrbis sample
+        run: |
+          rm -rf build_project
+          mkdir -p build_project
+
+          cp -a "$OO_PS4_TOOLCHAIN/samples/hello_world/." \
+            build_project/
+
+          echo "===== PROJECT ====="
+          find build_project -maxdepth 4 -type f | sort
+
+      - name: Verify project
+        run: |
+          if [ ! -f build_project/Makefile ]; then
+            echo "ERROR: Makefile was not found."
+            exit 1
+          fi
+
+          echo "Project created successfully."
+
+      - name: Build
+        working-directory: build_project
+        run: |
+          make clean || true
+          make
+
+      - name: Find PKG
+        run: |
+          echo "===== SEARCHING FOR PKG ====="
+
+          find build_project \
+            -type f \
+            -name "*.pkg" \
+            -print
+
+          PKG=$(find build_project \
+            -type f \
+            -name "*.pkg" \
+            | head -n 1)
+
+          if [ -z "$PKG" ]; then
+            echo "ERROR: No PKG was produced."
+            echo "===== BUILD FILES ====="
+            find build_project -maxdepth 5 -type f | sort
+            exit 1
+          fi
+
+          echo "PKG=$PKG" >> "$GITHUB_ENV"
+
+          echo "================================"
+          echo "PKG CREATED:"
+          echo "$PKG"
+          echo "================================"
+
+      - name: Upload PKG
+        uses: actions/upload-artifact@v4
+        with:
+          name: PisscouPS4AppStore
+          path: ${{ env.PKG }}
